@@ -1,0 +1,240 @@
+/* BLUETOOTH MAIN COMMANDS
+Bluetooth.begin (baud rate for bluetooth signal)
+SoftwareSerial Bluetooth (RX, TX) - pinouts for bluetooth module. Note that the RX of the module is connected to the TX of the arduino. (R = Receive, T = Transmit)
+Bluetooth.read (scan bluetooth signal)
+Bluetooth.available(statement for when bluetooth is on. imagine this as ON state for bluetooth. Used for if, else)
+
+ena: right
+enb: left (probably)
+
+Serial Monitor:
+1 = good output
+0 = Bad output
+
+if displaying: 
+  !!! = ready and connected
+  !! = Invalid command (i dont think you'll see this)
+  10 = good (1 - ascii range, 0 - bad command)
+  0 - bad (invalid, even lowercase is bad) 
+    this reads in char, so you put string then it will show multiple 0s
+
+F B L F S, 
+U D N(number)
+  ^-<>. = the actual values. up, down, left, right, stop respectively. 
+
+
+
+
+for serial.println, do not put words, if i could swear here i would
+*/
+
+#include <SoftwareSerial.h>
+
+// Bluetooth
+SoftwareSerial Bluetooth(1, 2); // RX, TX
+
+// Motor pins
+const int ENA = 11;  // PWM for Motor A
+const int IN1 = 13;  // Motor A input 1
+const int IN2 = 12;  // Motor A input 2
+const int ENB = 3;   // PWM for Motor B
+const int IN3 = 2;   // Motor B input 1
+const int IN4 = A3;  // Motor B input 2
+
+// Ultrasonic sensor pins
+const int TRIG_PIN = A1; // Ultrasonic trigger
+const int ECHO_PIN = A2; // Ultrasonic echo
+
+// Speed variables
+int motorSpeedA = 100;
+int motorSpeedB = 100;
+
+// Distance threshold for obstacle detection (in cm)
+const int DISTANCE_THRESHOLD = 20;
+
+void setup() {
+  // Initialize serial communication
+  Serial.begin(9600);
+  Bluetooth.begin(9600);
+
+  // Initialize motor pins
+  pinMode(ENA, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(ENB, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+
+  // Initialize ultrasonic sensor pins
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  // Stop motors initially
+  stopMotors();
+
+  Serial.println("!!!"); // Ready
+  Bluetooth.println("Arduino ready!");
+}
+
+void loop() {
+  // Check for obstacles
+  if (isObstacleDetected()) {
+    stopMotors();
+    Serial.println("Obstacle detected!");
+    Bluetooth.println("Obstacle detected!");
+    delay(500);
+    return;
+  }
+
+  // Check for Bluetooth commands
+  if (Bluetooth.available()) {
+    char command = Bluetooth.read();
+
+    if (command >= ' ' && command <= '~') { // Printable ASCII range
+      Serial.print("1");
+
+      if (command == 'F' || command == 'B' || command == 'L' || command == 'R' || command == 'S' || command == 'U' || command == 'D' || command == 'N') {
+        executeCommand(command);
+      } else {
+        Serial.println("0"); // Invalid input
+      }
+    }
+  }
+
+  // Check for Serial Monitor commands
+  if (Serial.available()) {
+    char command = Serial.read();
+
+    if (command >= ' ' && command <= '~') { // Printable ASCII range
+      Bluetooth.print(command);
+
+      if (command == 'F' || command == 'B' || command == 'L' || command == 'R' || command == 'S' || command == 'U' || command == 'D' || command == 'N') {
+        executeCommand(command);
+      } else {
+        Serial.println("0"); // Invalid input
+      }
+    }
+  }
+
+  delay(300);
+}
+
+// Function to detect obstacles
+bool isObstacleDetected() {
+  long duration;
+  int distance;
+
+  // Send a 10-microsecond pulse to trigger the sensor
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  // Measure the duration of the echo
+  duration = pulseIn(ECHO_PIN, HIGH);
+
+  // Calculate distance in cm
+  distance = duration * 0.034 / 2;
+
+  return distance < DISTANCE_THRESHOLD;
+}
+
+// Motor control functions
+void moveForward() {
+  analogWrite(ENA, motorSpeedA);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+
+  analogWrite(ENB, motorSpeedB + 80);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+
+  Serial.println("^");
+}
+
+void moveBackward() {
+  analogWrite(ENA, motorSpeedA);
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+
+  analogWrite(ENB, motorSpeedB + 80);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+
+  Serial.println("-");
+}
+
+void turnLeft() {
+  analogWrite(ENA, motorSpeedA);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+
+  analogWrite(ENB, motorSpeedB + 80);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+
+  Serial.println("<");
+}
+
+void turnRight() {
+  analogWrite(ENA, motorSpeedA);
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+
+  analogWrite(ENB, motorSpeedB + 80);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+
+  Serial.println(">");
+}
+
+void stopMotors() {
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+
+  Serial.println(".");
+}
+
+void executeCommand(char command) {
+  switch (command) {
+    case 'F': moveForward(); break;
+    case 'B': moveBackward(); break;
+    case 'L': turnLeft(); break;
+    case 'R': turnRight(); break;
+    case 'S': stopMotors(); break;
+    case 'U': adjustSpeed(10); break;
+    case 'D': adjustSpeed(-10); break;
+    case 'N': numberSpeed(); break;
+    default: Serial.println("!!"); break;
+  }
+}
+
+void adjustSpeed(int change) {
+  motorSpeedA += change;
+  motorSpeedB += change;
+
+  if (motorSpeedA > 255) motorSpeedA = 255;
+  if (motorSpeedA < 0) motorSpeedA = 0;
+  if (motorSpeedB > 255) motorSpeedB = 255;
+  if (motorSpeedB < 0) motorSpeedB = 0;
+
+  Serial.print("<-");
+  Serial.println("->");
+}
+
+void numberSpeed() {
+  if (Bluetooth.available()) {
+    char speedChar = Bluetooth.read();
+    if (speedChar >= '0' && speedChar <= '9') {
+      int newSpeed = speedChar - '0';
+      motorSpeedA = newSpeed * 25;
+      motorSpeedB = newSpeed * 25;
+    }
+  }
+}
