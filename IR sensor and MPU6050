@@ -1,0 +1,432 @@
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <LiquidCrystal.h>
+
+// Component definitions
+Adafruit_MPU6050 mpu;
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
+// Motor control pins
+const int ena = 11, in1 = 13, in2 = 12;  // Left motor (Motor A)84
+const int enb = 3, in3 = 2, in4 = A3;   // Right motor (Motor B)
+
+// IR sensor pins
+const int LEFT_IR = A2; //green
+const int RIGHT_IR = A1; //orange (normal)
+
+// Constants
+#define DETECT_LIMIT 300 //detects the black line (range = 0 - 400)
+#define FORWARD_SPEED 60 
+#define TURN_SHARP_SPEED 200 //when actual turns
+#define TURN_SLIGHT_SPEED 120 //turn to double check whether or not turn is an actual left turn (acts as a safety check)
+#define DELAY_AFTER_TURN 250 //how long for machine to turn to overcmoe 90 degree turns
+#define BEFORE_TURN_DELAY 5 //makes motors stop, to ensure no movement before turn begins (to avoid overshooting)
+
+//note: turn left and right are swapped, so turnLeft is actually the function for turning right. rename it if you want, I want to go sleep.
+
+/* not used yet lmao
+#define TRIG_PIN 1
+#define ECHO_PIN 0
+*/
+
+// Variables
+int left_value, right_value;
+char lastDirection = 'S';  // 'F': Forward, 'R': Right, 'L': Left, 'S': Stop
+float rampAngle = 0;
+float SumAngle = 0;
+float TotalRotation = 0;
+unsigned long previousMillis = 0;
+const long angleUpdateInterval = 100;  // Adjust sampling rate
+const int threshold = 300;
+int Act = 0;
+float ax, ay, az;  // Accelerometer data (g's)
+float ax_mps2, ay_mps2, az_mps2;  // Acceleration in m/s^2
+float velocityX = 0, velocityY = 0, velocityZ = 0;  // Velocity in m/s
+float displacementX = 0, displacementY = 0, displacementZ = 0;  // Displacement in meters
+float totalDisplacement = 0;  // Total displacement in meters
+//unsigned long previousMillis = 0;  // Used for time calculation
+float dt = 0.1;  // Time step (in seconds)
+
+void setup() {
+
+//Troubleshooting
+   Serial.begin(9600);  // Initialize serial communication at 9600 baud
+   pinMode(ena, OUTPUT); // Right motors (weaker, +60)
+   pinMode(enb, OUTPUT); //Left motors (normal)
+   pinMode(in1, OUTPUT); //Right1
+   pinMode(in2, OUTPUT); //right2
+   pinMode(in3, OUTPUT); //left1
+   pinMode(in4, OUTPUT); //left2
+   pinMode(LEFT_IR, INPUT);
+   pinMode(RIGHT_IR, INPUT);
+
+   // Stop motors initially
+   analogWrite(ena, 0);
+   analogWrite(enb, 0);
+
+  // Initialize motor pins
+  pinMode(ena, OUTPUT);
+  pinMode(enb, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+
+  //Initialize IR Sensors
+  pinMode(LEFT_IR, INPUT);
+  pinMode(RIGHT_IR, INPUT);
+
+  // Stop motors initially
+  analogWrite(ena, 0);
+  analogWrite(enb, 0);
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+
+   // Initialize LCD
+  lcd.begin(16, 2);
+  lcd.print("Initializing...");
+
+  // Initialize MPU6050
+  if (!mpu.begin()) {
+    lcd.clear();
+    lcd.print("MPU6050 FAIL");
+    while (1);
+  }
+  lcd.clear();
+  lcd.print("MPU6050 OK");
+/*
+  if (isUltrasonicConnected()) {
+    lcd.clear();
+    lcd.print("Ultrasonic OK");
+  } else {
+    lcd.clear();
+    lcd.print("Ultrasonic FAIL");
+    while (1);  // Stop execution if the sensor isn't working
+  }
+*/
+  // Provide initial push to the motors
+  analogWrite(ena, 255);
+  analogWrite(enb, 255);
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, HIGH);
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  delay(10);
+}
+
+void loop() {
+  // Read sensor values
+  left_value = analogRead(LEFT_IR);
+  delay(1);
+  right_value = analogRead(RIGHT_IR);
+  delay(1);
+
+// Debugging: Print sensor values and last direction
+  Serial.print("Left IR: ");
+  Serial.print(left_value);
+  Serial.print(" | Right IR: ");
+  Serial.print(right_value);
+  Serial.print(" | Last Direction: ");
+  Serial.println(lastDirection);
+  
+  /*
+   code for ramp incline
+  displayAngle();
+  if (Act < 1) {
+    analogWrite(ena, 230);  // Starting push
+    analogWrite(enb, 170);
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, HIGH);
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+    delay(1000);
+    displayAngle();
+    moveRocket();
+    delay(1000);
+    stopCar();
+    delay(4000);  // Wait before next cycle
+
+    // Rotate 360 degrees
+    while (SumAngle < 350) {
+      SumAngle = sumOfAngleCalculation();
+      if (SumAngle >= 350) {
+        stopCar();
+        delay(1000);
+     } else {
+        rotate360();
+      }
+    }
+
+   analogWrite(ena, 255);  // Starting push
+   analogWrite(enb, 255);
+   analogWrite(ena, FORWARD_SPEED+60);
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, HIGH);
+
+    analogWrite(enb, FORWARD_SPEED-40);
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+    delay(10);
+    Act++;
+  }
+  */
+  
+  /*
+   code for accelerometer
+  // Read accelerometer data
+  if (totalDisplacement < 170.1) {  // Adding a small threshold to stop slightly before 170 cm
+    
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
+
+    // Convert from g's to m/s^2 (1 g = 9.81 m/s^2)
+    float ax_mps2 = a.acceleration.x * 9.81;
+    float ay_mps2 = a.acceleration.y * 9.81;
+    float az_mps2 = a.acceleration.z * 9.81;
+
+    // Integrate acceleration to get velocity
+    velocityX += ax_mps2 * dt;
+    velocityY += ay_mps2 * dt;
+    velocityZ += az_mps2 * dt;
+
+    // Integrate velocity to get displacement
+    displacementX += velocityX * dt;
+    displacementY += velocityY * dt;
+    displacementZ += velocityZ * dt;
+
+    // Calculate total displacement using Euclidean distance
+    totalDisplacement = sqrt(pow(displacementX, 2) + pow(displacementY, 2) + pow(displacementZ, 2));
+
+    // Display displacement on LCD
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Displacement: ");
+    lcd.setCursor(0, 1);
+    lcd.print(totalDisplacement, 2);  // Show total displacement with 2 decimal places
+    lcd.print(" m");
+
+    // Print to Serial Monitor for debugging
+    Serial.print("Displacement X: ");
+    Serial.print(displacementX);
+    Serial.print(" m, Y: ");
+    Serial.print(displacementY);
+    Serial.print(" m, Z: ");
+    Serial.print(displacementZ);
+    Serial.print(" m, Total Displacement: ");
+    Serial.println(totalDisplacement);
+
+    // Wait for the next update
+    delay(10);
+  } else {
+    lcd.clear();
+    lcd.print("Pause for 2 seconds");
+    delay(2000);
+  }
+ */
+ 
+  // Logic for ir sensors
+    if (right_value >= DETECT_LIMIT && !(left_value >= DETECT_LIMIT)) {
+      turnRight();
+    } else if (left_value >= DETECT_LIMIT && !(right_value >= DETECT_LIMIT)) {
+      turnLeft();
+   } else if (!(left_value >= DETECT_LIMIT) && !(right_value >= DETECT_LIMIT)) {
+     stopCar();
+   } else if (left_value >= DETECT_LIMIT && right_value >= DETECT_LIMIT) {
+      moveForward();
+    }
+ 
+}
+
+/*
+bool isUltrasonicConnected() {
+  // Send a pulse to trigger the ultrasonic sensor
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);  
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  // Measure the time for the pulse to return
+  long duration = pulseIn(ECHO_PIN, HIGH);  
+
+  // If duration is 0, it indicates no echo (sensor not working or disconnected)
+  if (duration == 0) {
+    return false;  // No echo, sensor is not working
+  } else {
+    return true;  // Sensor is working
+  }
+}
+*/
+// Get ramp angle using MPU6050
+float getRampAngle() {
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+ 
+  float ax_mps2 = a.acceleration.x * 9.81;
+  float ay_mps2 = a.acceleration.y * 9.81;
+  float az_mps2 = a.acceleration.z * 9.81;
+ 
+  // Calculate angle based on accelerometer data
+  return abs(atan2(ax_mps2, az_mps2) * 180 / 3.141592);
+}
+
+void displayAngle(){
+  // Display ramp angle
+  rampAngle = getRampAngle();
+  lcd.clear();
+  lcd.print("Ramp Angle: ");
+  lcd.setCursor(0, 1);
+  lcd.print(rampAngle);
+  lcd.print(" deg");
+}
+
+
+
+// Gyroscope function for rotation speed
+float gyrofunction() {
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+  return abs(g.gyro.z * 180 / 3.141592);
+}
+
+// Function to accumulate total rotation
+float sumOfAngleCalculation() {
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - previousMillis >= angleUpdateInterval) {
+    previousMillis = currentMillis;
+    float RateOfRotation = gyrofunction();  // Get angular velocity (°/s)
+    float deltaTime = angleUpdateInterval / 1000.0;  // Convert ms to seconds
+
+    // Accumulate the total rotation
+    TotalRotation += RateOfRotation * deltaTime;
+
+    // Optional: Print the current rotation for debugging
+    Serial.print("Total Rotation: ");
+    Serial.println(TotalRotation);
+
+    return TotalRotation;
+  }
+  return TotalRotation;
+}
+
+/* code for incline and stuff. Plus, the analogWrite is wrong
+void moveRocket() {
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, HIGH);
+  analogWrite(ena, 220);  // Adjust speed as necessary
+
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enb, 220);
+}
+
+void rotate360() {
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, HIGH);
+  analogWrite(ena, 255);  // Full speed for rotation
+
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, HIGH);
+  analogWrite(enb, 200);
+}
+*/
+
+void moveForward() {
+  if (lastDirection != 'F') {
+    analogWrite(ena, 255);  // Starting push
+    analogWrite(enb, 255);
+    lastDirection = 'F';
+    delay(40); //delay for the leds to find the signal (?)
+  } else {
+  analogWrite(ena, FORWARD_SPEED);
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, HIGH);
+
+  analogWrite(enb, FORWARD_SPEED+80);
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  }
+}
+
+void stopCar() {
+  if (lastDirection != 'S') {
+    analogWrite(ena, 0);
+    analogWrite(enb, 0);
+    lastDirection = 'S';
+    delay(40);
+  } else {
+    analogWrite(ena, 0);
+    analogWrite(enb, 0);
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, LOW);
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, LOW);
+    lastDirection = 'S';
+  }
+}
+
+void turnRight() { //lmao this actually turns left
+  // If First time Left Turn is Taken
+  if (lastDirection != 'R') {
+    lastDirection = 'R';
+    // Stop the motor for some time
+    analogWrite(ena, 0);
+    analogWrite(enb, 0);
+    delay(BEFORE_TURN_DELAY);
+
+    // take slight Right turn
+    analogWrite(ena, TURN_SLIGHT_SPEED);  // Left motor FORWARD
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, HIGH);
+
+    analogWrite(enb, TURN_SLIGHT_SPEED+80);  // Right motor BACKWARD
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, LOW);
+  }else {
+    // take sharp Right turn
+    analogWrite(ena, TURN_SHARP_SPEED);  // Left motor FORWARD
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, HIGH);
+
+    analogWrite(enb, TURN_SHARP_SPEED+50);  // Right motor BACKWARD
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, HIGH);
+    delay(DELAY_AFTER_TURN);
+  }
+ 
+}
+
+void turnLeft() { //lmao this actually turns right
+  // If First time Left Turn is Taken
+  if (lastDirection != 'L') {
+    lastDirection = 'L';
+    // Stop the motor for some time
+    analogWrite(ena, 0);
+    analogWrite(enb, 0);
+    delay(BEFORE_TURN_DELAY);
+
+    // take slight Left turn
+    analogWrite(ena, TURN_SLIGHT_SPEED);  // Left motor backward
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+
+    analogWrite(enb, TURN_SLIGHT_SPEED+80);  // Right motor forward
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+  }else {
+    // take sharp Left turn
+    analogWrite(ena, TURN_SHARP_SPEED-25);  // Left motor backward
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+
+    analogWrite(enb, TURN_SHARP_SPEED+50);  // Right motor forward
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+    delay(DELAY_AFTER_TURN);
+  }
+ 
+}
